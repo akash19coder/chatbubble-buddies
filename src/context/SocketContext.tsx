@@ -1,10 +1,9 @@
-
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useToast } from '@/components/ui/use-toast';
 
 // Define server URL - in production this should be your deployed server
-const SERVER_URL = 'http://localhost:3001';
+const SERVER_URL = 'https://483c-36-252-209-101.ngrok-free.app';
 
 interface SocketContextType {
   socket: Socket | null;
