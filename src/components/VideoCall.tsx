@@ -7,7 +7,7 @@ import { Mic, MicOff, Video, VideoOff, UserX, SkipForward, Flag } from 'lucide-r
 import Button from './Button';
 
 const VideoCall: React.FC = () => {
-  const { isConnected, isSearching, endChat, reportUser, skipUser } = useChatContext();
+  const { isConnected, isSearching, endChat, reportUser, skipUser, remoteUser } = useChatContext();
   
   const {
     localVideoRef,
@@ -15,11 +15,13 @@ const VideoCall: React.FC = () => {
     isConnecting,
     isMuted,
     isVideoEnabled,
+    error,
     toggleAudio,
     toggleVideo,
     initializeLocalStream
   } = useWebRTC({
     isCallStarted: isConnected || isSearching,
+    partnerId: remoteUser?.id || null,
   });
 
   // Initialize local stream when component mounts
@@ -47,6 +49,9 @@ const VideoCall: React.FC = () => {
                 </div>
                 <p className="text-lg font-medium">Looking for someone to chat with...</p>
                 <p className="text-sm text-foreground/60 mt-2">This won't take long!</p>
+                {error && (
+                  <p className="text-sm text-red-500 mt-2">{error}</p>
+                )}
               </div>
             ) : (
               <div className="text-center p-6">

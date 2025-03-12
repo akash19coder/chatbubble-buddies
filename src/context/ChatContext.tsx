@@ -1,6 +1,8 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useToast } from "@/components/ui/use-toast";
+import { useSocket } from './SocketContext';
+import { toast as sonnerToast } from 'sonner';
 
 interface User {
   id: string;
@@ -35,24 +37,46 @@ const generateId = () => Math.random().toString(36).substring(2, 10);
 
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { toast } = useToast();
+  const { socket, isConnected: socketConnected } = useSocket();
   const [isSearching, setIsSearching] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [currentUser] = useState<User>({ id: generateId(), isConnected: true });
+  const [currentUser, setCurrentUser] = useState<User>({ id: '', isConnected: false });
   const [remoteUser, setRemoteUser] = useState<User | null>(null);
 
-  // Start searching for a match
-  const startSearching = useCallback(() => {
-    if (isSearching || isConnected) return;
-    
-    setIsSearching(true);
-    
-    // For demo purposes, simulate finding a match after a random delay
-    const timeout = setTimeout(() => {
-      const newRemoteUser = { id: generateId(), isConnected: true };
-      setRemoteUser(newRemoteUser);
+  // Update current user when socket connects
+  useEffect(() => {
+    if (socket) {
+      setCurrentUser({
+        id: socket.id || generateId(),
+        isConnected: socketConnected
+      });
+    }
+  }, [socket, socketConnected]);
+
+  // Set up socket event listeners
+  useEffect(() => {
+    if (!socket) return;
+
+    // When user starts searching
+    const onSearching = () => {
+      setIsSearching(true);
+      setIsConnected(false);
+    };
+
+    // When user stops searching
+    const onSearchStopped = () => {
+      setIsSearching(false);
+    };
+
+    // When user is matched with another user
+    const onMatched = ({ partnerId }: { partnerId: string }) => {
       setIsSearching(false);
       setIsConnected(true);
+      setRemoteUser({
+        id: partnerId,
+        isConnected: true
+      });
       
       // Welcome message
       setMessages([
@@ -68,21 +92,95 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         title: 'Connected!',
         description: 'You are now chatting with a stranger.',
       });
-    }, 1500 + Math.random() * 2000); // Random delay between 1.5-3.5 seconds
+    };
+
+    // When partner disconnects or skips
+    const onPartnerDisconnected = () => {
+      toast({
+        title: 'Chat ended',
+        description: 'Your chat partner has disconnected.',
+      });
+      
+      setIsConnected(false);
+      setRemoteUser(null);
+    };
+
+    // When partner skips this user
+    const onPartnerSkipped = () => {
+      toast({
+        title: 'Chat ended',
+        description: 'Your chat partner skipped you.',
+      });
+      
+      setIsConnected(false);
+      setRemoteUser(null);
+    };
+
+    // When chat is ended by partner
+    const onChatEnded = () => {
+      toast({
+        title: 'Chat ended',
+        description: 'Your chat partner ended the chat.',
+      });
+      
+      setIsConnected(false);
+      setRemoteUser(null);
+    };
+
+    // When receiving a message
+    const onReceiveMessage = ({ source, message, timestamp }: { source: string, message: string, timestamp: string }) => {
+      const newMessage = {
+        id: generateId(),
+        senderId: source,
+        content: message,
+        timestamp: new Date(timestamp),
+      };
+      
+      setMessages(prev => [...prev, newMessage]);
+    };
+
+    // Add event listeners
+    socket.on('searching', onSearching);
+    socket.on('search_stopped', onSearchStopped);
+    socket.on('matched', onMatched);
+    socket.on('partner_disconnected', onPartnerDisconnected);
+    socket.on('partner_skipped', onPartnerSkipped);
+    socket.on('chat_ended', onChatEnded);
+    socket.on('receive_message', onReceiveMessage);
+
+    // Clean up listeners on unmount
+    return () => {
+      socket.off('searching', onSearching);
+      socket.off('search_stopped', onSearchStopped);
+      socket.off('matched', onMatched);
+      socket.off('partner_disconnected', onPartnerDisconnected);
+      socket.off('partner_skipped', onPartnerSkipped);
+      socket.off('chat_ended', onChatEnded);
+      socket.off('receive_message', onReceiveMessage);
+    };
+  }, [socket, toast]);
+
+  // Start searching for a match
+  const startSearching = useCallback(() => {
+    if (!socket || isSearching || isConnected) return;
     
-    return () => clearTimeout(timeout);
-  }, [isSearching, isConnected, toast]);
+    socket.emit('start_searching');
+    setIsSearching(true);
+  }, [socket, isSearching, isConnected]);
 
   // Stop searching
   const stopSearching = useCallback(() => {
-    if (!isSearching) return;
+    if (!socket || !isSearching) return;
+    
+    socket.emit('stop_searching');
     setIsSearching(false);
-  }, [isSearching]);
+  }, [socket, isSearching]);
 
   // End the current chat
   const endChat = useCallback(() => {
-    if (!isConnected) return;
+    if (!socket || !isConnected) return;
     
+    socket.emit('end_chat');
     setIsConnected(false);
     setRemoteUser(null);
     setMessages([]);
@@ -91,11 +189,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       title: 'Chat ended',
       description: 'You have disconnected from the chat.',
     });
-  }, [isConnected, toast]);
+  }, [socket, isConnected, toast]);
 
   // Send a message
   const sendMessage = useCallback((content: string) => {
-    if (!isConnected || !content.trim()) return;
+    if (!socket || !isConnected || !remoteUser || !content.trim()) return;
     
     const newMessage = {
       id: generateId(),
@@ -104,39 +202,24 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       timestamp: new Date(),
     };
     
+    // Add message to local state
     setMessages(prev => [...prev, newMessage]);
     
-    // For demo purposes, simulate receiving a response after a delay
-    if (Math.random() > 0.3) { // 70% chance of getting a response
-      setTimeout(() => {
-        const responses = [
-          "Oh, that's interesting!",
-          "I see what you mean.",
-          "Really? Tell me more about that.",
-          "I hadn't thought about it that way.",
-          "Hmm, I'm not sure I agree, but I see your point.",
-          "What made you think of that?",
-          "That's cool! I've been thinking about that too.",
-          "How long have you been interested in this topic?",
-          "Fascinating perspective!",
-          "I had a similar experience once.",
-        ];
-        
-        const responseMessage = {
-          id: generateId(),
-          senderId: remoteUser?.id || 'unknown',
-          content: responses[Math.floor(Math.random() * responses.length)],
-          timestamp: new Date(),
-        };
-        
-        setMessages(prev => [...prev, responseMessage]);
-      }, 1000 + Math.random() * 2000);
-    }
-  }, [isConnected, currentUser.id, remoteUser]);
+    // Send message to server
+    socket.emit('send_message', {
+      target: remoteUser.id,
+      message: content.trim()
+    });
+  }, [socket, isConnected, remoteUser, currentUser.id]);
 
   // Report the current user
   const reportUser = useCallback(() => {
-    if (!isConnected) return;
+    if (!socket || !isConnected || !remoteUser) return;
+    
+    socket.emit('report_user', {
+      targetId: remoteUser.id,
+      reason: 'inappropriate behavior'
+    });
     
     toast({
       title: 'User Reported',
@@ -146,28 +229,29 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     
     // End the chat after reporting
     endChat();
-  }, [isConnected, endChat, toast]);
+  }, [socket, isConnected, remoteUser, endChat, toast]);
 
   // Skip to next user
   const skipUser = useCallback(() => {
-    if (!isConnected) return;
+    if (!socket || !isConnected) return;
     
-    endChat();
+    socket.emit('skip');
+    setIsConnected(false);
+    setRemoteUser(null);
+    setMessages([]);
     
-    // Start searching for a new match after a short delay
-    setTimeout(() => {
-      startSearching();
-    }, 500);
-  }, [isConnected, endChat, startSearching]);
+    // Socket will automatically put us back in the queue
+    setIsSearching(true);
+  }, [socket, isConnected]);
 
   // Clean up on unmount
   useEffect(() => {
     return () => {
-      if (isConnected) {
-        endChat();
+      if (socket && isConnected) {
+        socket.emit('end_chat');
       }
     };
-  }, [isConnected, endChat]);
+  }, [socket, isConnected]);
 
   return (
     <ChatContext.Provider
