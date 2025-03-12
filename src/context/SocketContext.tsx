@@ -3,7 +3,7 @@ import { io, Socket } from 'socket.io-client';
 import { useToast } from '@/components/ui/use-toast';
 
 // Define server URL - in production this should be your deployed server
-const SERVER_URL = 'https://483c-36-252-209-101.ngrok-free.app';
+const SERVER_URL = 'https://chatbubble-buddies.onrender.com';
 
 interface SocketContextType {
   socket: Socket | null;
